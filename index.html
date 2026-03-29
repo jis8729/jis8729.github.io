@@ -4599,42 +4599,35 @@
 
                                     // Runtime safety check
                                     if (!canEnter(nextNodeId, agv.id)) {
-                                        // Hold position — cap at 0.99 so AGV stays visually near the boundary
-                                        agv.progress = Math.min(
-                                            agv.progress,
-                                            0.99,
-                                        );
+                                        agv.progress = Math.min(agv.progress, 0.99);
                                         agv.blocked = true;
-                                        // Accumulate blocked time for replan trigger
                                         if (!agv._blockedMs) agv._blockedMs = 0;
                                         agv._blockedMs += dt;
-                                        // Only attempt replan after 1.5s of being stuck
+                                        if (!agv._replanCount) agv._replanCount = 0;
+
                                         if (agv._blockedMs > 1500) {
                                             agv._blockedMs = 0;
-                                            const dest =
-                                                agv.path[agv.path.length - 1];
-                                            const alt = safeBfs(
-                                                agv.node,
-                                                dest,
-                                                agv.id,
-                                            );
+                                            agv._replanCount++;
+                                            const dest = agv.path[agv.path.length - 1];
+                                            const alt = safeBfs(agv.node, dest, agv.id);
                                             if (alt && alt.length > 1) {
-                                                agv.path = alt;
-                                                agv.pathIndex = 0;
-                                                agv.progress = 0;
-                                                agv.blocked = false;
+                                                agv.path = alt; agv.pathIndex = 0; agv.progress = 0; agv.blocked = false;
+                                                agv._replanCount = 0;
                                                 updateReservation(agv);
-                                                logRef.current.push({
-                                                    time: Date.now(),
-                                                    agv: agv.id,
-                                                    type: "REPLAN",
-                                                    detail:
-                                                        "우회 " +
-                                                        alt.length +
-                                                        "노드",
-                                                });
-                                                if (logRef.current.length > 30)
-                                                    logRef.current.shift();
+                                                logRef.current.push({ time: Date.now(), agv: agv.id, type: "REPLAN", detail: "우회 " + alt.length + "노드" });
+                                                if (logRef.current.length > 30) logRef.current.shift();
+                                            } else if (agv._replanCount >= 3) {
+                                                agv._replanCount = 0;
+                                                agv.blocked = false;
+                                                agv._blockedMs = 0;
+                                                const task = tasks.find((t) => t.id === agv.taskId);
+                                                if (task && task.state !== "COMPLETE") { task.state = "PENDING"; task.agvId = null; }
+                                                agv.taskId = null;
+                                                agv.path = []; agv.pathIndex = 0; agv.progress = 0;
+                                                keepOnlyCurrent(agv.id, agv.node);
+                                                agv.state = "IDLE";
+                                                logRef.current.push({ time: Date.now(), agv: agv.id, type: "YIELD", detail: "교착해소 양보" });
+                                                if (logRef.current.length > 30) logRef.current.shift();
                                             }
                                         }
                                         continue;
